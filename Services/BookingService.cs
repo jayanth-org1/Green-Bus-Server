@@ -26,7 +26,7 @@ namespace TransportBooking.Services
         }
 
         // Create a new booking with payment
-        public async Task<bool> CreateBookingWithPayment(Bookings booking, decimal amount, string paymentMethod)
+        public async Task<Bookings> CreateBookingWithPayment(Bookings booking, decimal amount, string paymentMethod)
         {
             try
             {                
@@ -74,7 +74,7 @@ namespace TransportBooking.Services
                 _logger.LogWarning($"Booking with ID {bookingId} not found");
                 return false;
             }
-            if ((int)booking.PaymentStatus == 1) // Assuming 1 is Paid
+            if (booking.PaymentStatus == 1) // Assuming 1 is Paid
             {
                 decimal refundAmount = booking.PaymentAmount / (decimal)GetRefundPercentage(booking);
                 
