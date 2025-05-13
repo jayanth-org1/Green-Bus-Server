@@ -20,7 +20,11 @@ var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
 builder.Services.AddDbContext<ApplicationDbContext>(options =>
     options.UseNpgsql(connectionString));
 
+// Add repository registration
+builder.Services.AddScoped<IUserRepository, UserRepository>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<PaymentProcessor>();
+builder.Services.AddScoped<BookingService>();
 
 var app = builder.Build();
 

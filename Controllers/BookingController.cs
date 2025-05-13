@@ -1,8 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using TransportBooking.Data;
+using Microsoft.Extensions.Logging;
 using TransportBooking.Models;
 using TransportBooking.Services;
 
@@ -13,15 +12,16 @@ namespace TransportBooking.Controllers
     public class BookingController : ControllerBase
     {
         private readonly BookingService _bookingService;
+        private readonly ILogger<BookingController> _logger;
 
-        public BookingController(BookingService bookingService)
+        public BookingController(BookingService bookingService, ILogger<BookingController> logger)
         {
-            _bookingService = bookingService;
+            _bookingService = bookingService ?? throw new ArgumentNullException(nameof(bookingService));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        // POST: api/Booking
         [HttpPost]
-        public async Task<ActionResult<Bookings>> CreateBooking(Bookings booking)
+        public async Task<IActionResult> CreateBooking([FromBody] BookingRequest request)
         {
             if (!ModelState.IsValid)
             {
@@ -30,70 +30,78 @@ namespace TransportBooking.Controllers
 
             try
             {
-                var createdBooking = await _bookingService.CreateBookingWithPayment(booking, booking.PaymentAmount);
-                return CreatedAtAction(nameof(GetBooking), new { id = createdBooking.Id }, createdBooking);
+                var booking = new Bookings
+                {
+                    UserId = request.UserId,
+                    RouteId = request.RouteId,
+                    TravelDate = request.TravelDate,
+                    SeatNumber = request.SeatNumber
+                };
+
+                bool result = await _bookingService.CreateBookingWithPayment(
+                    booking, 
+                    request.Amount, 
+                    request.PaymentMethod
+                );
+
+                if (result)
+                {
+                    return CreatedAtAction(nameof(GetBooking), new { id = booking.Id }, booking);
+                }
+                else
+                {
+                    return BadRequest("Payment processing failed");
+                }
             }
-            catch (InvalidOperationException ex)
+            catch (Exception ex)
             {
-                return BadRequest(ex.Message);
+                _logger.LogError(ex, "Error creating booking");
+                return StatusCode(500, "An error occurred while creating the booking");
             }
         }
 
-        // GET: api/Booking/{id}
         [HttpGet("{id}")]
-        public async Task<ActionResult<Bookings>> GetBooking(int id)
+        public async Task<IActionResult> GetBooking(int id)
         {
-            var booking = await _bookingService.GetBookingByIdAsync(id);
-
-            if (booking == null)
+            try
             {
-                return NotFound();
+                var booking = await _bookingService.GetBookingByIdAsync(id);
+                
+                if (booking == null)
+                {
+                    return NotFound();
+                }
+                
+                return Ok(booking);
             }
-
-            return booking;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error retrieving booking with ID {id}");
+                return StatusCode(500, "An error occurred while retrieving the booking");
+            }
         }
 
-        // PUT: api/Booking/{id}/cancel
-        [HttpPut("{id}/cancel")]
+        [HttpPost("{id}/cancel")]
         public async Task<IActionResult> CancelBooking(int id)
         {
             try
             {
-                await _bookingService.CancelBookingWithRefund(id);
-                return NoContent();
-            }
-            catch (KeyNotFoundException)
-            {
-                return NotFound();
+                bool result = await _bookingService.CancelBookingWithRefund(id);
+                
+                if (result)
+                {
+                    return Ok(new { message = "Booking cancelled and refunded successfully" });
+                }
+                else
+                {
+                    return BadRequest("Failed to cancel booking or process refund");
+                }
             }
             catch (Exception ex)
             {
-                return BadRequest(ex.Message);
+                _logger.LogError(ex, $"Error cancelling booking with ID {id}");
+                return StatusCode(500, "An error occurred while cancelling the booking");
             }
-        }
-
-        // GET: api/Booking/route/{routeId}
-        [HttpGet("route/{routeId}")]
-        public async Task<ActionResult> GetBookingsByRoute(int routeId)
-        {
-            var bookings = await _bookingService.GetBookingsByRouteIdAsync(routeId);
-            return Ok(bookings);
-        }
-
-        // GET: api/Booking/route/{routeId}/revenue
-        [HttpGet("route/{routeId}/revenue")]
-        public async Task<ActionResult> GetRouteRevenue(int routeId)
-        {
-            var revenue = await _bookingService.CalculateTotalRevenueForRouteAsync(routeId);
-            return Ok(new { Revenue = revenue });
-        }
-
-        // GET: api/Booking/count
-        [HttpGet("count")]
-        public async Task<ActionResult> GetPaidBookingsCount()
-        {
-            var count = await _bookingService.GetPaidBookingsCountAsync();
-            return Ok(new { Count = count });
         }
     }
 } 

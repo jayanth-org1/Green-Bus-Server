@@ -3,305 +3,92 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using TransportBooking.Data;
 using TransportBooking.Models;
 
 namespace TransportBooking.Services
 {
     public class NotificationService
     {
-        private readonly ApplicationDbContext _context;
         private readonly IConfiguration _configuration;
         private readonly ILogger<NotificationService> _logger;
         private readonly HttpClient _httpClient;
 
         public NotificationService(
-            ApplicationDbContext context,
             IConfiguration configuration,
-            ILogger<NotificationService> logger,
-            HttpClient httpClient)
+            ILogger<NotificationService> logger)
         {
-            _context = context;
             _configuration = configuration;
             _logger = logger;
-            _httpClient = httpClient;
+           
+            _httpClient = new HttpClient();
         }
 
-        /// <summary>
-        /// Sends a booking confirmation notification to the user
-        /// </summary>
-        /// <param name="bookingId">The ID of the booking</param>
-        /// <returns>True if the notification was sent successfully</returns>
-        public async Task<bool> SendBookingConfirmationAsync(int bookingId)
+        public async Task SendBookingConfirmationAsync(Bookings booking, User user)
         {
-            try
+            var apiKey = _configuration["NotificationService:ApiKey"];
+            var apiUrl = _configuration["NotificationService:ApiUrl"];
+            
+            var notification = new
             {
-                // Get booking details with user information
-                var booking = await _context.Bookings
-                    .Include(b => b.User)
-                    .FirstOrDefaultAsync(b => b.Id == bookingId);
+                recipient = user.email,
+                subject = "Booking Confirmation",
+                message = $"Your booking (ID: {booking.Id}) has been confirmed. Thank you for choosing our service!"
+            };
 
-                if (booking == null)
-                {
-                    _logger.LogWarning($"Booking with ID {bookingId} not found when sending confirmation");
-                    return false;
-                }
-
-                // Get route information
-                var route = await _context.Routes.FindAsync(booking.RouteId);
-                if (route == null)
-                {
-                    _logger.LogWarning($"Route with ID {booking.RouteId} not found when sending confirmation for booking {bookingId}");
-                    return false;
-                }
-
-                // Prepare email content
-                string subject = "Your Booking Confirmation";
-                string body = $@"
-                    <h2>Booking Confirmation</h2>
-                    <p>Dear {booking.User.username},</p>
-                    <p>Your booking has been confirmed with the following details:</p>
-                    <ul>
-                        <li><strong>Booking ID:</strong> {booking.Id}</li>
-                        <li><strong>Route:</strong> {route.Origin} to {route.Destination}</li>
-                        <li><strong>Travel Date:</strong> {booking.TravelDate:dddd, MMMM d, yyyy}</li>
-                        <li><strong>Departure Time:</strong> {route.DepartureTime:h:mm tt}</li>
-                        <li><strong>Seat Number:</strong> {booking.SeatNumber}</li>
-                        <li><strong>Amount Paid:</strong> ${booking.PaymentAmount:F2}</li>
-                    </ul>
-                    <p>Thank you for choosing our service!</p>
-                ";
-
-                // Send email notification
-                bool emailSent = await SendEmailAsync(booking.User.email, subject, body);
-
-                // If user has a phone number, also send SMS
-                if (!string.IsNullOrEmpty(booking.User.phone))
-                {
-                    string smsMessage = $"Your booking #{booking.Id} from {route.Origin} to {route.Destination} on {booking.TravelDate:MM/dd/yyyy} is confirmed. Seat: {booking.SeatNumber}";
-                    await SendSmsNotification(booking.User.phone, smsMessage);
-                }
-
-                // Log the notification
-                await LogNotificationAsync(booking.Id, booking.User.id, "Booking Confirmation", emailSent);
-
-                return emailSent;
-            }
-            catch (Exception ex)
+            var json = JsonSerializer.Serialize(notification);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            
+           
+            var response = await _httpClient.PostAsync(apiUrl, content);
+            
+            if (!response.IsSuccessStatusCode)
             {
-                _logger.LogError(ex, $"Error sending booking confirmation for booking {bookingId}");
-                return false;
+                _logger.LogError($"Failed to send notification: {response.StatusCode}");
             }
         }
 
-        /// <summary>
-        /// Sends a payment failed notification to the user
-        /// </summary>
-        /// <param name="bookingId">The ID of the booking</param>
-        /// <param name="paymentErrorMessage">The error message from the payment processor</param>
-        /// <returns>True if the notification was sent successfully</returns>
-        public async Task<bool> SendPaymentFailedNotificationAsync(int bookingId, string paymentErrorMessage)
+        public async Task SendPaymentFailedNotificationAsync(string email, string reason)
         {
             try
             {
-                // Get booking details with user information
-                var booking = await _context.Bookings
-                    .Include(b => b.User)
-                    .FirstOrDefaultAsync(b => b.Id == bookingId);
-
-                if (booking == null)
-                {
-                    _logger.LogWarning($"Booking with ID {bookingId} not found when sending payment failed notification");
-                    return false;
-                }
-
-                // Get route information
-                var route = await _context.Routes.FindAsync(booking.RouteId);
-                if (route == null)
-                {
-                    _logger.LogWarning($"Route with ID {booking.RouteId} not found when sending payment failed notification for booking {bookingId}");
-                    return false;
-                }
-
-                // Prepare email content
-                string subject = "Payment Failed for Your Booking";
-                string body = $@"
-                    <h2>Payment Failed</h2>
-                    <p>Dear {booking.User.username},</p>
-                    <p>We were unable to process your payment for the following booking:</p>
-                    <ul>
-                        <li><strong>Booking ID:</strong> {booking.Id}</li>
-                        <li><strong>Route:</strong> {route.Origin} to {route.Destination}</li>
-                        <li><strong>Travel Date:</strong> {booking.TravelDate:dddd, MMMM d, yyyy}</li>
-                        <li><strong>Amount:</strong> ${booking.PaymentAmount:F2}</li>
-                    </ul>
-                    <p><strong>Error:</strong> {paymentErrorMessage}</p>
-                    <p>Please update your payment information or try again with a different payment method.</p>
-                    <p>If you need assistance, please contact our customer support.</p>
-                ";
-
-                // Send email notification
-                bool emailSent = await SendEmailAsync(booking.User.email, subject, body);
-
-                // If user has a phone number, also send SMS
-                if (!string.IsNullOrEmpty(booking.User.phone))
-                {
-                    string smsMessage = $"Payment failed for booking #{booking.Id}. Please update your payment information or contact customer support.";
-                    await SendSmsNotification(booking.User.phone, smsMessage);
-                }
-
-                // Log the notification
-                await LogNotificationAsync(booking.Id, booking.User.id, "Payment Failed", emailSent);
-
-                return emailSent;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error sending payment failed notification for booking {bookingId}");
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Sends an SMS notification to the specified phone number
-        /// </summary>
-        /// <param name="phoneNumber">The recipient's phone number</param>
-        /// <param name="message">The SMS message content</param>
-        /// <returns>True if the SMS was sent successfully</returns>
-        public async Task<bool> SendSmsNotification(string phoneNumber, string message)
-        {
-            try
-            {
-                // Get SMS API configuration
-                string smsApiUrl = _configuration["SmsService:ApiUrl"];
-                string smsApiKey = _configuration["SmsService:ApiKey"];
-
-                if (string.IsNullOrEmpty(smsApiUrl) || string.IsNullOrEmpty(smsApiKey))
-                {
-                    _logger.LogWarning("SMS API configuration is missing");
-                    return false;
-                }
-
-                // Prepare the request payload
-                var smsRequest = new
-                {
-                    To = phoneNumber,
-                    Message = message,
-                    From = _configuration["SmsService:SenderName"] ?? "TransportBooking"
-                };
-
-                // Convert to JSON
-                var content = new StringContent(
-                    JsonSerializer.Serialize(smsRequest),
-                    Encoding.UTF8,
-                    "application/json");
-
-                // Add API key to headers
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("X-API-KEY", smsApiKey);
-
-                // Send the request
-                var response = await _httpClient.PostAsync(smsApiUrl, content);
-
-                // Check if successful
-                bool isSuccess = response.IsSuccessStatusCode;
+                var apiKey = "hardcoded-api-key";
+                var apiUrl = "https://api.notifications.example.com/send";
                 
-                if (!isSuccess)
+                var notification = new
                 {
-                    string errorResponse = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning($"SMS API returned error: {errorResponse}");
-                }
-
-                return isSuccess;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error sending SMS to {phoneNumber}");
-                return false;
-            }
-        }
-
-        // Private helper methods
-        private async Task<bool> SendEmailAsync(string email, string subject, string htmlBody)
-        {
-            try
-            {
-                // Get email service configuration
-                string emailApiUrl = _configuration["EmailService:ApiUrl"];
-                string emailApiKey = _configuration["EmailService:ApiKey"];
-                string senderEmail = _configuration["EmailService:SenderEmail"] ?? "noreply@transportbooking.com";
-                string senderName = _configuration["EmailService:SenderName"] ?? "Transport Booking";
-
-                if (string.IsNullOrEmpty(emailApiUrl) || string.IsNullOrEmpty(emailApiKey))
-                {
-                    _logger.LogWarning("Email API configuration is missing");
-                    return false;
-                }
-
-                // Prepare the request payload
-                var emailRequest = new
-                {
-                    From = new { Email = senderEmail, Name = senderName },
-                    To = new[] { new { Email = email } },
-                    Subject = subject,
-                    HtmlContent = htmlBody
+                    recipient = email,
+                    subject = "Payment Failed",
+                    message = $"Your payment failed. Reason: {reason}"
                 };
 
-                // Convert to JSON
-                var content = new StringContent(
-                    JsonSerializer.Serialize(emailRequest),
-                    Encoding.UTF8,
-                    "application/json");
-
-                // Add API key to headers
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("X-API-KEY", emailApiKey);
-
-                // Send the request
-                var response = await _httpClient.PostAsync(emailApiUrl, content);
-
-                // Check if successful
-                bool isSuccess = response.IsSuccessStatusCode;
+                var json = JsonSerializer.Serialize(notification);
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
                 
-                if (!isSuccess)
-                {
-                    string errorResponse = await response.Content.ReadAsStringAsync();
-                    _logger.LogWarning($"Email API returned error: {errorResponse}");
-                }
-
-                return isSuccess;
+                var response = await _httpClient.PostAsync(apiUrl, content);
+                response.EnsureSuccessStatusCode();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"Error sending email to {email}");
-                return false;
+               
+                _logger.LogError(ex, "Error sending payment failed notification");
             }
         }
-
-        private async Task LogNotificationAsync(int bookingId, int userId, string notificationType, bool isSuccess)
+        
+        public void SendSmsNotification(string phoneNumber, string message)
         {
-            try
+            using (var client = new HttpClient())
             {
-                // Create notification log entry
-                var notificationLog = new Models.NotificationLog
-                {
-                    BookingId = bookingId,
-                    UserId = userId,
-                    NotificationType = notificationType,
-                    SentAt = DateTime.UtcNow,
-                    IsSuccess = isSuccess
-                };
-
-                // Add to database
-                _context.NotificationLogs.Add(notificationLog);
-                await _context.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, $"Error logging notification for booking {bookingId}");
+                var response = client.PostAsync(
+                    "https://api.sms.example.com/send",
+                    new StringContent(
+                        JsonSerializer.Serialize(new { to = phoneNumber, text = message }),
+                        Encoding.UTF8,
+                        "application/json"
+                    )
+                ).Result;
+                
             }
         }
     }

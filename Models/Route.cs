@@ -4,7 +4,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 
 namespace TransportBooking.Models
 {
-    public class Route
+    public class Routes
     {
         public int Id { get; set; }
         
@@ -27,10 +27,8 @@ namespace TransportBooking.Models
         public int Capacity { get; set; }
         
         [Column(TypeName = "decimal(18,2)")]
-        public decimal Price { get; set; }
+        public decimal BasePrice { get; set; }
         
-        public string VehicleType { get; set; }
-        
-        public string Status { get; set; } = "Active";
+        public int AvailableSeats { get; set; }
     }
 } 

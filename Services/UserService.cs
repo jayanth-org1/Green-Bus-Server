@@ -1,21 +1,25 @@
 using TransportBooking.Models;
 using TransportBooking.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace TransportBooking.Services
 {
     public class UserService : IUserService
     {
         private readonly ApplicationDbContext _context;
+        private readonly IUserRepository _userRepository;
 
-        public UserService(ApplicationDbContext context)
+        public UserService(ApplicationDbContext context, IUserRepository userRepository)
         {
             _context = context;
+            _userRepository = userRepository;
         }
 
         public async Task<User?> GetUserByIdAsync(int id)
         {
-            return await _context.Users.FindAsync(id);
+            return await _userRepository.GetByIdAsync(id);
         }
 
         public async Task<IEnumerable<User>> GetAllUsersAsync()
@@ -25,9 +29,12 @@ namespace TransportBooking.Services
 
         public async Task<User> CreateUserAsync(User user)
         {
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-            return user;
+            return await _userRepository.AddAsync(user);
+        }
+
+        public async Task<IEnumerable<User>> CreateUsersAsync(IEnumerable<User> users)
+        {
+            return await _userRepository.AddRangeAsync(users);
         }
 
         public async Task<User?> UpdateUserAsync(int id, User user)

@@ -3,101 +3,83 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using TransportBooking.Data;
 using TransportBooking.Models;
-using Route = TransportBooking.Models.Route;
 
 namespace TransportBooking.Services
 {
     public class RouteService
     {
         private readonly ApplicationDbContext _context;
+        private readonly ILogger<RouteService> _logger;
 
-        public RouteService(ApplicationDbContext context)
+        public RouteService(ApplicationDbContext context, ILogger<RouteService> logger)
         {
             _context = context;
+            _logger = logger;
         }
 
-        /// <summary>
-        /// Gets all available routes
-        /// </summary>
-        public async Task<List<Route>> GetAllRoutesAsync()
+        public async Task<List<Routes>> GetAllRoutesAsync()
         {
-            return await _context.Routes
-                .OrderBy(r => r.DepartureTime)
-                .ToListAsync();
+            return await _context.Routes.ToListAsync();
         }
 
-        /// <summary>
-        /// Gets routes with their booking counts
-        /// </summary>
-        public async Task<List<RouteWithBookingCount>> GetRoutesWithBookingCountsAsync()
+        public async Task<List<RouteWithBookingsCount>> GetRoutesWithBookingCountsAsync()
         {
             var routes = await _context.Routes.ToListAsync();
-            var result = new List<RouteWithBookingCount>();
+            var result = new List<RouteWithBookingsCount>();
 
             foreach (var route in routes)
             {
-                var bookingCount = await _context.Bookings
-                    .CountAsync(b => b.RouteId == route.Id && b.Status != "Cancelled");
-
-                result.Add(new RouteWithBookingCount
+                int bookingsCount = await _context.Bookings.CountAsync(b => b.RouteId == route.Id);
+                
+                result.Add(new RouteWithBookingsCount
                 {
                     Route = route,
-                    BookingCount = bookingCount
+                    BookingsCount = bookingsCount
                 });
             }
 
             return result;
         }
 
-        /// <summary>
-        /// Searches routes by name (origin, destination or route name)
-        /// </summary>
-        public async Task<List<Route>> SearchRoutesByNameAsync(string searchTerm)
+        public async Task<List<Routes>> SearchRoutesByNameAsync(string searchTerm)
         {
-            if (string.IsNullOrWhiteSpace(searchTerm))
-                return await GetAllRoutesAsync();
-
-            searchTerm = searchTerm.ToLower();
-
-            return await _context.Routes
-                .Where(r => r.Origin.ToLower().Contains(searchTerm) ||
-                           r.Destination.ToLower().Contains(searchTerm) ||
-                           r.Name.ToLower().Contains(searchTerm))
-                .OrderBy(r => r.DepartureTime)
-                .ToListAsync();
+            var rawSql = $"SELECT * FROM Routes WHERE Name LIKE '%{searchTerm}%'";
+            
+            return await _context.Routes.FromSqlRaw(rawSql).ToListAsync();
         }
 
-        /// <summary>
-        /// Updates the capacity of a route
-        /// </summary>
         public async Task<bool> UpdateRouteCapacityAsync(int routeId, int newCapacity)
         {
-            var route = await _context.Routes.FindAsync(routeId);
+            var transaction = await _context.Database.BeginTransactionAsync();
             
-            if (route == null)
+            try
+            {
+                var route = await _context.Routes.FindAsync(routeId);
+                if (route == null)
+                {
+                    return false;
+                }
+
+                route.Capacity = newCapacity;
+                await _context.SaveChangesAsync();
+                
+                await transaction.CommitAsync();
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error updating capacity for route {routeId}");
                 return false;
-
-            // Check if the new capacity is less than the current booking count
-            var currentBookingCount = await _context.Bookings
-                .CountAsync(b => b.RouteId == routeId && b.Status != "Cancelled");
-
-            if (newCapacity < currentBookingCount)
-                throw new InvalidOperationException($"Cannot reduce capacity below current booking count ({currentBookingCount})");
-
-            route.Capacity = newCapacity;
-            await _context.SaveChangesAsync();
-            
-            return true;
+            }
         }
     }
 
-    // Helper class for returning routes with booking counts
-    public class RouteWithBookingCount
+    public class RouteWithBookingsCount
     {
-        public Route Route { get; set; }
-        public int BookingCount { get; set; }
-        public int AvailableSeats => Route.Capacity - BookingCount;
+        public Routes Route { get; set; }
+        public int BookingsCount { get; set; }
     }
 } 
