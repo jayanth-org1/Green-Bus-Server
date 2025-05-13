@@ -11,6 +11,10 @@ namespace TransportBooking.Data
         }
 
         public DbSet<User> Users { get; set; }
+        public DbSet<Bookings> Bookings { get; set; }
+        public DbSet<Models.Route> Routes { get; set; }
+        public DbSet<Models.NotificationLog> NotificationLogs { get; set; }
+        public DbSet<Models.Payment> Payments { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

@@ -14,5 +14,7 @@ namespace TransportBooking.Models
         public required string email { get; set; }
         
         public DateTime created_at { get; set; }
+        
+        public string phone { get; set; }
     }
 } 
