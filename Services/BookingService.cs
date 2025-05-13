@@ -5,16 +5,33 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using TransportBooking.Data;
 using TransportBooking.Models;
+using TransportBooking.Services;
 
 namespace TransportBooking.Services
 {
     public class BookingService
     {
         private readonly ApplicationDbContext _context;
+        private readonly NotificationService _notificationService;
+        private readonly VehicleService _vehicleService;
+        private readonly DiscountService _discountService;
+        private readonly UserPreferenceService _userPreferenceService;
+        private readonly PaymentProcessor _paymentProcessor;
 
-        public BookingService(ApplicationDbContext context)
+        public BookingService(
+            ApplicationDbContext context, 
+            NotificationService notificationService,
+            VehicleService vehicleService,
+            DiscountService discountService,
+            UserPreferenceService userPreferenceService,
+            PaymentProcessor paymentProcessor)
         {
             _context = context;
+            _notificationService = notificationService;
+            _vehicleService = vehicleService;
+            _discountService = discountService;
+            _userPreferenceService = userPreferenceService;
+            _paymentProcessor = paymentProcessor;
         }
 
         // Public methods
@@ -50,16 +67,32 @@ namespace TransportBooking.Services
 
             // Calculate refund amount based on cancellation policy
             decimal refundPercentage = GetRefundPercentage(booking);
-            decimal refundAmount = booking.PaymentAmount * refundPercentage;
+            decimal refundAmount = booking.PaymentAmount * (refundPercentage / 100m);
 
-            // Update booking status
-            booking.Status = "Cancelled";
-            booking.PaymentStatus = Bookings.PaymentStatusEnum.Refunded;
+            // Process refund through payment processor
+            var refundResult = await _paymentProcessor.ProcessRefund(
+                bookingId, 
+                refundAmount, 
+                $"Booking cancellation - {refundPercentage}% refund policy");
 
-            // Process refund (in a real app, this would integrate with payment provider)
-            // ProcessRefund(booking.UserId, refundAmount);
+            if (refundResult.Success)
+            {
+                // Update booking status
+                booking.Status = "Cancelled";
+                booking.PaymentStatus = Bookings.PaymentStatusEnum.Refunded;
+                await _context.SaveChangesAsync();
+            }
+            else
+            {
+                // Log the error but still cancel the booking
+                booking.Status = "Cancelled";
+                booking.Notes = $"Refund failed: {refundResult.ErrorMessage}";
+                await _context.SaveChangesAsync();
+                
+                // Throw exception to inform caller
+                throw new InvalidOperationException($"Booking cancelled but refund failed: {refundResult.ErrorMessage}");
+            }
 
-            await _context.SaveChangesAsync();
             return booking;
         }
 
@@ -93,6 +126,52 @@ namespace TransportBooking.Services
                 .SumAsync(b => b.PaymentAmount);
         }
 
+        public async Task<Bookings> CreateBookingAsync(Bookings booking)
+        {
+            // Check if vehicle is available
+            if (!_vehicleService.IsVehicleAvailable(booking.VehicleId, booking.TravelDate))
+            {
+                throw new InvalidOperationException("Selected vehicle is not available at this time");
+            }
+            
+            // Apply any eligible discounts
+            if (_discountService.IsEligibleForDiscount(booking.UserId.ToString()))
+            {
+                booking.DiscountAmount = _discountService.CalculateDiscount(booking.UserId.ToString(), booking.PaymentAmount);
+                booking.FinalPrice = booking.PaymentAmount - booking.DiscountAmount;
+            }
+            else
+            {
+                booking.DiscountAmount = 0;
+                booking.FinalPrice = booking.PaymentAmount;
+            }
+            
+            // Check user preferences for notifications
+            var preferences = await _userPreferenceService.GetUserPreferencesAsync(booking.UserId.ToString());
+            
+            // Validate seat availability
+            if (await IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber))
+            {
+                throw new InvalidOperationException("This seat is already booked for the selected date and route.");
+            }
+            
+            // Set booking properties
+            booking.BookingDate = DateTime.Now;
+            booking.Status = "Pending"; // Initial status before payment
+            
+            // Save booking to database
+            _context.Bookings.Add(booking);
+            await _context.SaveChangesAsync();
+            
+            // Send notification based on user preferences
+            if (preferences.ReceiveBookingConfirmations)
+            {
+                await _notificationService.SendBookingConfirmationAsync(booking.Id);
+            }
+            
+            return booking;
+        }
+
         // Private methods
         private decimal GetRefundPercentage(Bookings booking)
         {
@@ -103,13 +182,12 @@ namespace TransportBooking.Services
             // Refund policy:
             // - More than 7 days: 100% refund
             // - 3-7 days: 50% refund
-            // - Less than 3 days: 0% refund
             if (daysUntilTravel > 7)
-                return 1.0m;
+                return 100;
             else if (daysUntilTravel >= 3)
-                return 0.5m;
+                return 50;
             else
-                return 0.0m;
+                return 1;
         }
 
         private async Task<bool> IsSeatAlreadyBooked(int routeId, DateTime travelDate, int seatNumber)

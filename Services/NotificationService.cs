@@ -281,28 +281,80 @@ namespace TransportBooking.Services
             }
         }
 
-        private async Task LogNotificationAsync(int bookingId, int userId, string notificationType, bool isSuccess)
+        private async Task LogNotificationAsync(int? bookingId, int userId, string notificationType, bool isSuccess)
         {
-            try
+            var notificationLog = new NotificationLog
             {
-                // Create notification log entry
-                var notificationLog = new Models.NotificationLog
-                {
-                    BookingId = bookingId,
-                    UserId = userId,
-                    NotificationType = notificationType,
-                    SentAt = DateTime.UtcNow,
-                    IsSuccess = isSuccess
-                };
+                BookingId = bookingId,
+                UserId = userId,
+                Type = notificationType,
+                Message = $"Notification of type {notificationType} sent",
+                SentAt = DateTime.UtcNow,
+                Status = isSuccess ? "Sent" : "Failed",
+                IsSuccess = isSuccess
+            };
 
-                // Add to database
-                _context.NotificationLogs.Add(notificationLog);
-                await _context.SaveChangesAsync();
-            }
-            catch (Exception ex)
+            _context.NotificationLogs.Add(notificationLog);
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task SendRefundConfirmationAsync(int bookingId, decimal refundAmount)
+        {
+            var booking = await _context.Bookings
+                .Include(b => b.User)
+                .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+            if (booking == null)
             {
-                _logger.LogError(ex, $"Error logging notification for booking {bookingId}");
+                _logger.LogWarning($"Booking with ID {bookingId} not found when sending refund confirmation");
+                return;
             }
+
+            var notificationLog = new NotificationLog
+            {
+                UserId = booking.UserId,
+                Type = "RefundConfirmation",
+                Message = $"Your refund of ${refundAmount} for booking #{bookingId} has been processed successfully.",
+                SentAt = DateTime.UtcNow,
+                Status = "Sent"
+            };
+
+            _context.NotificationLogs.Add(notificationLog);
+            await _context.SaveChangesAsync();
+
+            // In a real application, we would send an email or SMS here
+            _logger.LogInformation($"Refund confirmation sent to user {booking.UserId} for booking {bookingId}");
+        }
+
+        public async Task SendRefundFailedNotificationAsync(int bookingId, string errorMessage)
+        {
+            var booking = await _context.Bookings
+                .Include(b => b.User)
+                .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+            if (booking == null)
+            {
+                _logger.LogWarning($"Booking with ID {bookingId} not found when sending refund failed notification");
+                return;
+            }
+
+            var notificationLog = new NotificationLog
+            {
+                UserId = booking.UserId,
+                Type = "RefundFailed",
+                Message = $"We encountered an issue processing your refund for booking #{bookingId}. Our team has been notified and will contact you shortly.",
+                SentAt = DateTime.UtcNow,
+                Status = "Sent"
+            };
+
+            _context.NotificationLogs.Add(notificationLog);
+            await _context.SaveChangesAsync();
+
+            // In a real application, we would send an email or SMS here
+            _logger.LogInformation($"Refund failed notification sent to user {booking.UserId} for booking {bookingId}");
+            
+            // Also log the actual error for internal purposes
+            _logger.LogError($"Refund failed for booking {bookingId}: {errorMessage}");
         }
     }
 } 

@@ -14,6 +14,8 @@ namespace TransportBooking.Models
         [Required]
         public int RouteId { get; set; }
         
+        public int VehicleId { get; set; }
+        
         [Required]
         public DateTime TravelDate { get; set; }
         
@@ -24,6 +26,10 @@ namespace TransportBooking.Models
         
         [Column(TypeName = "decimal(18,2)")]
         public decimal PaymentAmount { get; set; }
+        
+        public decimal DiscountAmount { get; set; }
+        
+        public decimal FinalPrice { get; set; }
         
         public string PaymentMethod { get; set; }
         
@@ -42,7 +48,11 @@ namespace TransportBooking.Models
         
         public string Status { get; set; } = "Pending";
         
+        public string Notes { get; set; }
+        
         // Navigation properties
         public User User { get; set; }
+        public Route Route { get; set; }
+        public Vehicle Vehicle { get; set; }
     }
 } 

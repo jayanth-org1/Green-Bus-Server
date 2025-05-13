@@ -18,19 +18,25 @@ namespace TransportBooking.Services
         private readonly ILogger<PaymentProcessor> _logger;
         private readonly HttpClient _httpClient;
         private readonly NotificationService _notificationService;
+        private readonly UserPreferenceService _userPreferenceService;
+        private readonly PaymentProviderService _paymentProviderService;
 
         public PaymentProcessor(
             ApplicationDbContext context,
             IConfiguration configuration,
             ILogger<PaymentProcessor> logger,
             HttpClient httpClient,
-            NotificationService notificationService)
+            NotificationService notificationService,
+            UserPreferenceService userPreferenceService,
+            PaymentProviderService paymentProviderService)
         {
             _context = context;
             _configuration = configuration;
             _logger = logger;
             _httpClient = httpClient;
             _notificationService = notificationService;
+            _userPreferenceService = userPreferenceService;
+            _paymentProviderService = paymentProviderService;
         }
 
         /// <summary>
@@ -55,7 +61,7 @@ namespace TransportBooking.Services
                     {
                         Success = false,
                         ErrorMessage = "Booking not found",
-                        TransactionId = null
+                        TransactionId = string.Empty
                     };
                 }
 
@@ -72,7 +78,7 @@ namespace TransportBooking.Services
                     {
                         Success = false,
                         ErrorMessage = validationResult.ErrorMessage,
-                        TransactionId = null
+                        TransactionId = string.Empty
                     };
                 }
 
@@ -80,117 +86,57 @@ namespace TransportBooking.Services
                 decimal processingFee = CalculateProcessingFee(booking.PaymentAmount, paymentDetails.PaymentMethod);
                 decimal totalAmount = booking.PaymentAmount + processingFee;
 
-                // Get payment gateway configuration
-                string paymentGatewayUrl = _configuration["PaymentGateway:ApiUrl"];
-                string paymentGatewayApiKey = _configuration["PaymentGateway:ApiKey"];
-                string paymentGatewayMerchantId = _configuration["PaymentGateway:MerchantId"];
-
-                if (string.IsNullOrEmpty(paymentGatewayUrl) || 
-                    string.IsNullOrEmpty(paymentGatewayApiKey) || 
-                    string.IsNullOrEmpty(paymentGatewayMerchantId))
-                {
-                    _logger.LogError("Payment gateway configuration is missing");
-                    return new PaymentResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Payment gateway configuration error",
-                        TransactionId = null
-                    };
-                }
-
-                // Prepare payment request
-                var paymentRequest = new
-                {
-                    MerchantId = paymentGatewayMerchantId,
-                    Amount = totalAmount,
-                    Currency = "USD",
-                    PaymentMethod = paymentDetails.PaymentMethod,
-                    CardNumber = MaskCardNumber(paymentDetails.CardNumber),
-                    CardHolderName = paymentDetails.CardHolderName,
-                    ExpiryMonth = paymentDetails.ExpiryMonth,
-                    ExpiryYear = paymentDetails.ExpiryYear,
-                    CVV = "***", // Don't log or send actual CVV
-                    Description = $"Payment for booking #{bookingId}",
-                    CustomerEmail = booking.User.email,
-                    BillingAddress = new
-                    {
-                        paymentDetails.BillingAddress.AddressLine1,
-                        paymentDetails.BillingAddress.AddressLine2,
-                        paymentDetails.BillingAddress.City,
-                        paymentDetails.BillingAddress.State,
-                        paymentDetails.BillingAddress.PostalCode,
-                        paymentDetails.BillingAddress.Country
-                    }
-                };
-
-                // Convert to JSON
-                var content = new StringContent(
-                    JsonSerializer.Serialize(paymentRequest),
-                    Encoding.UTF8,
-                    "application/json");
-
-                // Add API key to headers
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("X-API-KEY", paymentGatewayApiKey);
-
-                // In a real application, we would send the request to the payment gateway
-                // For this example, we'll simulate a successful payment
-                // var response = await _httpClient.PostAsync(paymentGatewayUrl, content);
+                // Process payment through gateway
+                var paymentResult = await ProcessPaymentWithGateway(paymentDetails, totalAmount);
                 
-                // Simulate payment gateway response
-                bool paymentSuccessful = SimulatePaymentGatewayResponse(paymentDetails);
-                string transactionId = paymentSuccessful ? Guid.NewGuid().ToString() : null;
-
-                if (paymentSuccessful)
+                if (paymentResult.Success)
                 {
-                    // Update booking with payment information
-                    booking.PaymentStatus = Bookings.PaymentStatusEnum.Paid;
-                    booking.Status = "Confirmed";
-                    booking.PaymentMethod = paymentDetails.PaymentMethod;
-                    
                     // Create payment record
-                    var payment = new Models.Payment
+                    var payment = new Payment
                     {
-                        BookingId = booking.Id,
+                        BookingId = bookingId,
                         Amount = booking.PaymentAmount,
                         ProcessingFee = processingFee,
                         TotalAmount = totalAmount,
                         PaymentMethod = paymentDetails.PaymentMethod,
-                        TransactionId = transactionId,
+                        TransactionId = paymentResult.TransactionId,
+                        AuthorizationCode = paymentResult.AuthorizationCode,
                         PaymentDate = DateTime.UtcNow,
                         Status = "Completed"
                     };
 
                     _context.Payments.Add(payment);
+            
+                    // Update booking status
+                    booking.PaymentStatus = Bookings.PaymentStatusEnum.Paid;
+            
                     await _context.SaveChangesAsync();
-
-                    // Send booking confirmation
-                    await _notificationService.SendBookingConfirmationAsync(bookingId);
-
+            
+                    // Send booking confirmation which includes payment details
+                    var userPreferences = await _userPreferenceService.GetUserPreferencesAsync(booking.UserId.ToString());
+                    if (userPreferences.ReceiveBookingConfirmations)
+                    {
+                        await _notificationService.SendBookingConfirmationAsync(bookingId);
+                    }
+            
                     return new PaymentResult
                     {
                         Success = true,
-                        ErrorMessage = null,
-                        TransactionId = transactionId,
+                        TransactionId = paymentResult.TransactionId,
+                        AuthorizationCode = paymentResult.AuthorizationCode,
                         ProcessingFee = processingFee,
                         TotalAmount = totalAmount
                     };
                 }
                 else
                 {
-                    // Update booking status
-                    booking.PaymentStatus = Bookings.PaymentStatusEnum.Failed;
-                    await _context.SaveChangesAsync();
-
+                    // Log payment failure
+                    _logger.LogWarning($"Payment failed for booking {bookingId}: {paymentResult.ErrorMessage}");
+            
                     // Send payment failed notification
-                    await _notificationService.SendPaymentFailedNotificationAsync(bookingId, "Payment was declined by the payment processor");
-
-                    return new PaymentResult
-                    {
-                        Success = false,
-                        ErrorMessage = "Payment was declined by the payment processor",
-                        TransactionId = null
-                    };
+                    await _notificationService.SendPaymentFailedNotificationAsync(bookingId, paymentResult.ErrorMessage);
+            
+                    return paymentResult;
                 }
             }
             catch (Exception ex)
@@ -199,7 +145,139 @@ namespace TransportBooking.Services
                 return new PaymentResult
                 {
                     Success = false,
-                    ErrorMessage = "An error occurred while processing the payment",
+                    ErrorMessage = "An unexpected error occurred while processing your payment",
+                    TransactionId = string.Empty
+                };
+            }
+        }
+
+        /// <summary>
+        /// Processes a refund for a booking
+        /// </summary>
+        /// <param name="bookingId">The ID of the booking to refund</param>
+        /// <param name="refundAmount">The amount to refund</param>
+        /// <param name="reason">The reason for the refund</param>
+        /// <returns>A PaymentResult object with the result of the refund processing</returns>
+        public async Task<PaymentResult> ProcessRefund(int bookingId, decimal refundAmount, string reason)
+        {
+            try
+            {
+                // Get the booking and its payment
+                var booking = await _context.Bookings
+                    .Include(b => b.User)
+                    .FirstOrDefaultAsync(b => b.Id == bookingId);
+
+                if (booking == null)
+                {
+                    _logger.LogWarning($"Booking with ID {bookingId} not found when processing refund");
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Booking not found",
+                        TransactionId = null
+                    };
+                }
+
+                var payment = await _context.Payments
+                    .FirstOrDefaultAsync(p => p.BookingId == bookingId && p.Status == "Completed");
+
+                if (payment == null)
+                {
+                    _logger.LogWarning($"No completed payment found for booking {bookingId}");
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = "No payment found for this booking",
+                        TransactionId = null
+                    };
+                }
+
+                // Validate refund amount
+                if (refundAmount <= 0 || refundAmount > payment.Amount)
+                {
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Invalid refund amount",
+                        TransactionId = null
+                    };
+                }
+
+                // Prepare refund request
+                var refundRequest = new RefundRequest
+                {
+                    OriginalTransactionId = payment.TransactionId,
+                    Amount = refundAmount,
+                    Reason = reason,
+                    CustomerEmail = booking.User.email
+                };
+
+                // Process refund through payment provider service
+                var gatewayResponse = await _paymentProviderService.ProcessRefundAsync(refundRequest);
+
+                if (gatewayResponse.Success)
+                {
+                    // Create refund record
+                    var refund = new Models.Payment
+                    {
+                        BookingId = booking.Id,
+                        Amount = -refundAmount, // Negative amount for refunds
+                        ProcessingFee = 0,
+                        TotalAmount = -refundAmount,
+                        PaymentMethod = payment.PaymentMethod,
+                        TransactionId = gatewayResponse.TransactionId,
+                        AuthorizationCode = gatewayResponse.AuthorizationCode,
+                        PaymentDate = DateTime.UtcNow,
+                        Status = "Refunded",
+                        RelatedPaymentId = payment.Id
+                    };
+
+                    // Update booking status if full refund
+                    if (refundAmount >= payment.Amount)
+                    {
+                        booking.Status = "Refunded";
+                        booking.PaymentStatus = Bookings.PaymentStatusEnum.Refunded;
+                    }
+                    else
+                    {
+                        booking.Status = "PartiallyRefunded";
+                    }
+
+                    _context.Payments.Add(refund);
+                    await _context.SaveChangesAsync();
+
+                    // Send refund confirmation
+                    await _notificationService.SendRefundConfirmationAsync(bookingId, refundAmount);
+
+                    return new PaymentResult
+                    {
+                        Success = true,
+                        ErrorMessage = null,
+                        TransactionId = gatewayResponse.TransactionId,
+                        ProcessingFee = 0,
+                        TotalAmount = refundAmount
+                    };
+                }
+                else
+                {
+                    // Send refund failed notification
+                    await _notificationService.SendRefundFailedNotificationAsync(bookingId, gatewayResponse.ErrorMessage);
+
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = gatewayResponse.ErrorMessage,
+                        TransactionId = null
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, $"Error processing refund for booking {bookingId}");
+                return new PaymentResult
+                {
+                    Success = false,
+                    ErrorMessage = "An error occurred while processing the refund",
                     TransactionId = null
                 };
             }
@@ -360,37 +438,88 @@ namespace TransportBooking.Services
             return "XXXX-XXXX-XXXX-" + cardNumber.Substring(cardNumber.Length - 4);
         }
 
-        private bool SimulatePaymentGatewayResponse(PaymentDetails paymentDetails)
+        public async Task<bool> ProcessPaymentAsync(string userId, decimal amount, string paymentMethod)
         {
-            // For testing purposes, we'll simulate payment failures for specific scenarios
+            // Check if user has saved payment methods
+            if (_userPreferenceService.HasSavedPaymentMethod(userId) && paymentMethod == "saved")
+            {
+                var preferences = await _userPreferenceService.GetUserPreferencesAsync(userId);
+                // Use saved payment method from preferences
+                paymentMethod = preferences.DefaultPaymentMethod;
+            }
             
-            // Simulate a declined card if the card number ends with "0000"
-            if (paymentDetails.CardNumber.EndsWith("0000"))
-                return false;
+            // ... existing payment processing code ...
             
-            // Simulate a declined card if the CVV is "000"
-            if (paymentDetails.CVV == "000")
-                return false;
-            
-            // Simulate a random failure with 5% probability
-            if (new Random().Next(100) < 5)
-                return false;
-            
-            // Otherwise, payment is successful
             return true;
+        }
+
+        private async Task<PaymentResult> ProcessPaymentWithGateway(PaymentDetails paymentDetails, decimal amount)
+        {
+            try
+            {
+                // Create payment request directly (no need for PaymentGatewayRequest)
+                var paymentRequest = new PaymentRequest
+                {
+                    Amount = amount,
+                    Currency = "USD",
+                    PaymentMethod = paymentDetails.PaymentMethod,
+                    CardNumber = paymentDetails.CardNumber,
+                    CardHolderName = paymentDetails.CardHolderName,
+                    ExpiryMonth = paymentDetails.ExpiryMonth,
+                    ExpiryYear = paymentDetails.ExpiryYear,
+                    CVV = paymentDetails.CVV,
+                    Description = "Transport booking payment",
+                    CustomerEmail = paymentDetails.CustomerEmail,
+                    BillingAddress = paymentDetails.BillingAddress
+                };
+
+                // Process payment through gateway
+                var gatewayResponse = await _paymentProviderService.ProcessPaymentAsync(paymentRequest);
+
+                if (gatewayResponse.Success)
+                {
+                    return new PaymentResult
+                    {
+                        Success = true,
+                        TransactionId = gatewayResponse.TransactionId,
+                        AuthorizationCode = gatewayResponse.AuthorizationCode,
+                        ErrorMessage = string.Empty
+                    };
+                }
+                else
+                {
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = gatewayResponse.ErrorMessage,
+                        TransactionId = string.Empty
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error processing payment through gateway");
+                return new PaymentResult
+                {
+                    Success = false,
+                    ErrorMessage = "An error occurred while processing the payment",
+                    TransactionId = string.Empty
+                };
+            }
         }
     }
 
     // Models for payment processing
     public class PaymentDetails
     {
-        public string CardNumber { get; set; }
-        public string CardHolderName { get; set; }
+        public string CardNumber { get; set; } = string.Empty;
+        public string CardHolderName { get; set; } = string.Empty;
         public int ExpiryMonth { get; set; }
         public int ExpiryYear { get; set; }
-        public string CVV { get; set; }
-        public string PaymentMethod { get; set; }
-        public BillingAddress BillingAddress { get; set; }
+        public string CVV { get; set; } = string.Empty;
+        public string PaymentMethod { get; set; } = string.Empty;
+        public string CustomerEmail { get; set; } = string.Empty;
+        public BillingAddress BillingAddress { get; set; } = new BillingAddress();
     }
 
     public class BillingAddress
@@ -406,8 +535,9 @@ namespace TransportBooking.Services
     public class PaymentResult
     {
         public bool Success { get; set; }
-        public string ErrorMessage { get; set; }
-        public string TransactionId { get; set; }
+        public string ErrorMessage { get; set; } = string.Empty;
+        public string TransactionId { get; set; } = string.Empty;
+        public string AuthorizationCode { get; set; } = string.Empty;
         public decimal ProcessingFee { get; set; }
         public decimal TotalAmount { get; set; }
     }

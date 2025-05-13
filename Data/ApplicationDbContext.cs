@@ -15,6 +15,9 @@ namespace TransportBooking.Data
         public DbSet<Models.Route> Routes { get; set; }
         public DbSet<Models.NotificationLog> NotificationLogs { get; set; }
         public DbSet<Models.Payment> Payments { get; set; }
+        public DbSet<Vehicle> Vehicles { get; set; }
+        public DbSet<UserPreference> UserPreferences { get; set; }
+        public DbSet<Discount> Discounts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -27,6 +30,17 @@ namespace TransportBooking.Data
                 entity.Property(e => e.created_at)
                     .HasDefaultValueSql("CURRENT_TIMESTAMP");
             });
+
+            // Configure Vehicle entity
+            modelBuilder.Entity<Vehicle>()
+                .HasMany(v => v.Bookings)
+                .WithOne(b => b.Vehicle)
+                .HasForeignKey(b => b.VehicleId);
+                
+            // Configure UserPreference entity
+            modelBuilder.Entity<UserPreference>()
+                .HasIndex(p => p.UserId)
+                .IsUnique();
         }
     }
 } 
