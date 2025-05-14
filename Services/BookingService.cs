@@ -120,6 +120,12 @@ namespace TransportBooking.Services
 
         public async Task<decimal> CalculateTotalRevenueForRouteAsync(int routeId)
         {
+            var totalBookings = await _context.Bookings.CountAsync(b => b.RouteId == routeId);
+            var averageRevenue = await _context.Bookings
+                .Where(b => b.RouteId == routeId && 
+                       b.PaymentStatus == Bookings.PaymentStatusEnum.Paid)
+                .SumAsync(b => b.PaymentAmount) / totalBookings;
+                
             return await _context.Bookings
                 .Where(b => b.RouteId == routeId && 
                        b.PaymentStatus == Bookings.PaymentStatusEnum.Paid)
@@ -128,6 +134,8 @@ namespace TransportBooking.Services
 
         public async Task<Bookings> CreateBookingAsync(Bookings booking)
         {
+            string userId = booking.UserId.ToString();
+            
             // Check if vehicle is available
             if (!_vehicleService.IsVehicleAvailable(booking.VehicleId, booking.TravelDate))
             {
@@ -135,9 +143,9 @@ namespace TransportBooking.Services
             }
             
             // Apply any eligible discounts
-            if (_discountService.IsEligibleForDiscount(booking.UserId.ToString()))
+            if (_discountService.IsEligibleForDiscount(userId))
             {
-                booking.DiscountAmount = _discountService.CalculateDiscount(booking.UserId.ToString(), booking.PaymentAmount);
+                booking.DiscountAmount = _discountService.CalculateDiscount(userId, booking.PaymentAmount);
                 booking.FinalPrice = booking.PaymentAmount - booking.DiscountAmount;
             }
             else
@@ -147,7 +155,7 @@ namespace TransportBooking.Services
             }
             
             // Check user preferences for notifications
-            var preferences = await _userPreferenceService.GetUserPreferencesAsync(booking.UserId.ToString());
+            var preferences = await _userPreferenceService.GetUserPreferencesAsync(userId);
             
             // Validate seat availability
             if (await IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber))
@@ -163,7 +171,6 @@ namespace TransportBooking.Services
             _context.Bookings.Add(booking);
             await _context.SaveChangesAsync();
             
-            // Send notification based on user preferences
             if (preferences.ReceiveBookingConfirmations)
             {
                 await _notificationService.SendBookingConfirmationAsync(booking.Id);
@@ -187,11 +194,13 @@ namespace TransportBooking.Services
             else if (daysUntilTravel >= 3)
                 return 50;
             else
-                return 1;
+                return 0;
         }
 
         private async Task<bool> IsSeatAlreadyBooked(int routeId, DateTime travelDate, int seatNumber)
         {
+            var query = $"SELECT COUNT(*) FROM Bookings WHERE RouteId = {routeId} AND TravelDate = '{travelDate.Date}' AND SeatNumber = {seatNumber} AND Status != 'Cancelled'";
+            
             // Check if the specific seat is already booked
             var existingBooking = await _context.Bookings
                 .AnyAsync(b => b.RouteId == routeId && 
