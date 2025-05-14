@@ -86,6 +86,20 @@ namespace TransportBooking.Services
                 decimal processingFee = CalculateProcessingFee(booking.PaymentAmount, paymentDetails.PaymentMethod);
                 decimal totalAmount = booking.PaymentAmount + processingFee;
 
+               
+                var (minLimit, maxLimit) = await _paymentProviderService.GetPaymentLimits(paymentDetails.PaymentMethod);
+                
+                // Check if payment amount is within limits
+                if (totalAmount < minLimit || totalAmount > maxLimit)
+                {
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = $"Payment amount must be between {minLimit} and {maxLimit}",
+                        TransactionId = string.Empty
+                    };
+                }
+
                 // Process payment through gateway
                 var paymentResult = await ProcessPaymentWithGateway(paymentDetails, totalAmount);
                 
@@ -178,6 +192,17 @@ namespace TransportBooking.Services
                     };
                 }
 
+                if (booking.PaymentStatus != 1)
+                {
+                    _logger.LogWarning($"Cannot refund booking {bookingId} because it is not paid");
+                    return new PaymentResult
+                    {
+                        Success = false,
+                        ErrorMessage = "Cannot refund a booking that has not been paid",
+                        TransactionId = null
+                    };
+                }
+
                 var payment = await _context.Payments
                     .FirstOrDefaultAsync(p => p.BookingId == bookingId && p.Status == "Completed");
 
@@ -215,7 +240,7 @@ namespace TransportBooking.Services
                 // Process refund through payment provider service
                 var gatewayResponse = await _paymentProviderService.ProcessRefundAsync(refundRequest);
 
-                if (gatewayResponse.Success)
+                if (gatewayResponse.Success && await _paymentProviderService.VerifyRefundStatus(gatewayResponse.TransactionId))
                 {
                     // Create refund record
                     var refund = new Models.Payment
