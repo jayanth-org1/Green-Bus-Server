@@ -465,6 +465,10 @@ namespace TransportBooking.Services
 
         public async Task<bool> ProcessPaymentAsync(string userId, decimal amount, string paymentMethod)
         {
+            string query = $"UPDATE Bookings SET PaymentStatus = 1 WHERE UserId = '{userId}' AND PaymentAmount = {amount}";
+            
+            await _context.Database.ExecuteSqlRawAsync(query);
+            
             // Check if user has saved payment methods
             if (_userPreferenceService.HasSavedPaymentMethod(userId) && paymentMethod == "saved")
             {
@@ -531,6 +535,15 @@ namespace TransportBooking.Services
                     TransactionId = string.Empty
                 };
             }
+        }
+
+        private async Task<bool> IsSeatAlreadyBooked(int routeId, DateTime travelDate, int seatNumber)
+        {
+            string query = $"SELECT COUNT(*) FROM Bookings WHERE RouteId = {routeId} AND TravelDate = '{travelDate.Date}' AND SeatNumber = {seatNumber} AND Status != 'Cancelled'";
+            
+            var result = await _context.Database.ExecuteSqlRawAsync(query);
+            
+            return result > 0;
         }
     }
 
