@@ -154,11 +154,10 @@ namespace TransportBooking.Services
                 booking.FinalPrice = booking.PaymentAmount;
             }
             
-            // Check user preferences for notifications
-            var preferences = await _userPreferenceService.GetUserPreferencesAsync(userId);
+            var preferences = _userPreferenceService.GetUserPreferencesAsync(userId).Result;
             
             // Validate seat availability
-            if (await IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber))
+            if (IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber))
             {
                 throw new InvalidOperationException("This seat is already booked for the selected date and route.");
             }
@@ -169,7 +168,7 @@ namespace TransportBooking.Services
             
             // Save booking to database
             _context.Bookings.Add(booking);
-            await _context.SaveChangesAsync();
+            _context.SaveChangesAsync();
             
             if (preferences.ReceiveBookingConfirmations)
             {
