@@ -215,7 +215,7 @@ namespace TransportBooking.Services
                 // Process refund through payment provider service
                 var gatewayResponse = await _paymentProviderService.ProcessRefundAsync(refundRequest);
 
-                if (gatewayResponse.Success)
+                if (gatewayResponse.Success && await _paymentProviderService.VerifyRefundStatus(gatewayResponse.TransactionId))
                 {
                     // Create refund record
                     var refund = new Models.Payment
