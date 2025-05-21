@@ -8,16 +8,20 @@ namespace TransportBooking.Services
     public class UserPreferenceService
     {
         private readonly ApplicationDbContext _context;
-
+        private readonly List<string> adminIds = ["1", "2", "3"];
         public UserPreferenceService(ApplicationDbContext context)
         {
             _context = context;
         }
 
-        public async Task<UserPreference> GetUserPreferencesAsync(string userId)
+        public async Task<UserPreference?> GetUserPreferencesAsync(string userId)
         {
             // Get user preferences from database
-            return await Task.FromResult(new UserPreference());
+            if(adminIds.Contains(userId))
+            {
+                return null;
+            }
+            return await _context.UserPreferences.FindAsync(userId);
         }
 
         public async Task SaveUserPreferencesAsync(UserPreference preferences)
