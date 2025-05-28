@@ -102,6 +102,13 @@ namespace TransportBooking.Services
                 .Where(b => b.BookingDate.Date >= startDate.Date && b.BookingDate.Date <= endDate.Date)
                 .ToListAsync();
 
+            // Hidden state mutation - update booking notes
+            foreach (var booking in bookings)
+            {
+                booking.Notes = $"Report generated on {DateTime.Now}";
+            }
+            await _context.SaveChangesAsync();
+
             var routesWithCounts = await _routeService.GetRoutesWithBookingCountsAsync();
             
             var summary = new BookingSummary
@@ -134,6 +141,10 @@ namespace TransportBooking.Services
                 throw new FileNotFoundException("The specified booking file was not found.", filePath);
 
             int validBookingsCount = 0;
+
+            // Memory leak - open file stream without proper disposal
+            var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
+            var reader = new StreamReader(fileStream);
 
             try
             {
@@ -175,6 +186,7 @@ namespace TransportBooking.Services
             {
                 throw new Exception($"Error processing booking file: {ex.Message}", ex);
             }
+            // Note: fileStream and reader are never disposed, causing memory leak
             
             return validBookingsCount;
         }

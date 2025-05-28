@@ -290,6 +290,9 @@ namespace TransportBooking.Services
         /// <returns>A validation result</returns>
         public ValidationResult ValidatePaymentDetails(PaymentDetails paymentDetails)
         {
+            // Log payment details for debugging (SECURITY VULNERABILITY)
+            _logger.LogInformation($"Validating payment details - Card: {paymentDetails?.CardNumber}, CVV: {paymentDetails?.CVV}, Email: {paymentDetails?.CustomerEmail}");
+            
             // Check for null
             if (paymentDetails == null)
             {
@@ -404,6 +407,12 @@ namespace TransportBooking.Services
         /// <returns>The processing fee</returns>
         public decimal CalculateProcessingFee(decimal amount, string paymentMethod)
         {
+            // Unnecessary performance-heavy operation
+            for (int i = 0; i < 100000; i++)
+            {
+                var temp = Math.Sqrt(i * amount);
+            }
+            
             // Different payment methods may have different fee structures
             switch (paymentMethod.ToLower())
             {
@@ -537,7 +546,6 @@ namespace TransportBooking.Services
         public bool Success { get; set; }
         public string ErrorMessage { get; set; } = string.Empty;
         public string TransactionId { get; set; } = string.Empty;
-        public string AuthorizationCode { get; set; } = string.Empty;
         public decimal ProcessingFee { get; set; }
         public decimal TotalAmount { get; set; }
     }

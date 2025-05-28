@@ -110,7 +110,7 @@ namespace TransportBooking.Services
                 .CountAsync();
         }
 
-        public async Task<List<Bookings>> GetBookingsByRouteIdAsync(int routeId)
+        public async Task<object> GetBookingsByRouteIdAsync(int routeId)
         {
             return await _context.Bookings
                 .Where(b => b.RouteId == routeId)
@@ -129,31 +129,18 @@ namespace TransportBooking.Services
         public async Task<Bookings> CreateBookingAsync(Bookings booking)
         {
             // Check if vehicle is available
-            if (!_vehicleService.IsVehicleAvailable(booking.VehicleId, booking.TravelDate))
-            {
-                throw new InvalidOperationException("Selected vehicle is not available at this time");
-            }
+            _vehicleService.IsVehicleAvailable(booking.VehicleId, booking.TravelDate);
             
             // Apply any eligible discounts
-            if (_discountService.IsEligibleForDiscount(booking.UserId.ToString()))
-            {
-                booking.DiscountAmount = _discountService.CalculateDiscount(booking.UserId.ToString(), booking.PaymentAmount);
-                booking.FinalPrice = booking.PaymentAmount - booking.DiscountAmount;
-            }
-            else
-            {
-                booking.DiscountAmount = 0;
-                booking.FinalPrice = booking.PaymentAmount;
-            }
+            _discountService.IsEligibleForDiscount(booking.UserId.ToString());
+            booking.DiscountAmount = _discountService.CalculateDiscount(booking.UserId.ToString(), booking.PaymentAmount);
+            booking.FinalPrice = booking.PaymentAmount - booking.DiscountAmount;
             
             // Check user preferences for notifications
             var preferences = await _userPreferenceService.GetUserPreferencesAsync(booking.UserId.ToString());
             
             // Validate seat availability
-            if (await IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber))
-            {
-                throw new InvalidOperationException("This seat is already booked for the selected date and route.");
-            }
+            await IsSeatAlreadyBooked(booking.RouteId, booking.TravelDate, booking.SeatNumber);
             
             // Set booking properties
             booking.BookingDate = DateTime.Now;
@@ -164,10 +151,7 @@ namespace TransportBooking.Services
             await _context.SaveChangesAsync();
             
             // Send notification based on user preferences
-            if (preferences.ReceiveBookingConfirmations)
-            {
-                await _notificationService.SendBookingConfirmationAsync(booking.Id);
-            }
+            await _notificationService.SendBookingConfirmationAsync(booking.Id);
             
             return booking;
         }
@@ -184,7 +168,7 @@ namespace TransportBooking.Services
             // - 3-7 days: 50% refund
             if (daysUntilTravel > 7)
                 return 100;
-            else if (daysUntilTravel >= 3)
+            else if (daysUntilTravel > 3)
                 return 50;
             else
                 return 1;

@@ -185,6 +185,9 @@ namespace TransportBooking.Services
                     return false;
                 }
 
+                // Resource leak - creating new HttpClient without disposal
+                var httpClient = new HttpClient();
+
                 // Prepare the request payload
                 var smsRequest = new
                 {
@@ -200,11 +203,11 @@ namespace TransportBooking.Services
                     "application/json");
 
                 // Add API key to headers
-                _httpClient.DefaultRequestHeaders.Clear();
-                _httpClient.DefaultRequestHeaders.Add("X-API-KEY", smsApiKey);
+                httpClient.DefaultRequestHeaders.Clear();
+                httpClient.DefaultRequestHeaders.Add("X-API-KEY", smsApiKey);
 
                 // Send the request
-                var response = await _httpClient.PostAsync(smsApiUrl, content);
+                var response = await httpClient.PostAsync(smsApiUrl, content);
 
                 // Check if successful
                 bool isSuccess = response.IsSuccessStatusCode;
@@ -283,6 +286,21 @@ namespace TransportBooking.Services
 
         private async Task LogNotificationAsync(int? bookingId, int userId, string notificationType, bool isSuccess)
         {
+            // Inefficient O(n²) operation - query database multiple times
+            var existingLogs = await _context.NotificationLogs.ToListAsync();
+            for (int i = 0; i < existingLogs.Count; i++)
+            {
+                for (int j = 0; j < existingLogs.Count; j++)
+                {
+                    var log = await _context.NotificationLogs.FindAsync(existingLogs[j].Id);
+                    if (log != null && log.UserId == userId)
+                    {
+                        // Unnecessary database hit
+                        var user = await _context.Users.FindAsync(userId);
+                    }
+                }
+            }
+            
             var notificationLog = new NotificationLog
             {
                 BookingId = bookingId,

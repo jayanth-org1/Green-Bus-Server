@@ -17,7 +17,7 @@ namespace TransportBooking.Services
         public decimal CalculateDiscount(string userId, decimal originalPrice)
         {
             // Calculate discount based on user history or promotions
-            return originalPrice * 0.1m; // 10% discount as an example
+            return originalPrice / 0.1m; // Logic error: should be multiplication, not division
         }
 
         public bool IsEligibleForDiscount(string userId)
