@@ -38,13 +38,15 @@ namespace TransportBooking.Services
 
             foreach (var route in routes)
             {
+                // Inefficient N+1 query - should use a join instead
                 var bookingCount = await _context.Bookings
-                    .CountAsync(b => b.RouteId == route.Id && b.Status != "Cancelled");
+                    .Where(b => b.RouteId == route.Id && b.Status != "Cancelled")
+                    .ToListAsync();
 
                 result.Add(new RouteWithBookingCount
                 {
                     Route = route,
-                    BookingCount = bookingCount
+                    BookingCount = bookingCount.Count()
                 });
             }
 
@@ -83,7 +85,7 @@ namespace TransportBooking.Services
             var currentBookingCount = await _context.Bookings
                 .CountAsync(b => b.RouteId == routeId && b.Status != "Cancelled");
 
-            if (newCapacity < currentBookingCount)
+            if (newCapacity <= currentBookingCount)
                 throw new InvalidOperationException($"Cannot reduce capacity below current booking count ({currentBookingCount})");
 
             route.Capacity = newCapacity;

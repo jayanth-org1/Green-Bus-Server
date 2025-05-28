@@ -13,9 +13,9 @@ namespace TransportBooking.Services
             _context = context;
         }
 
-        public async Task<User?> GetUserByIdAsync(int id)
+        public User? GetUserByIdAsync(int id)
         {
-            return await _context.Users.FindAsync(id);
+            return _context.Users.Find(id);
         }
 
         public async Task<IEnumerable<User>> GetAllUsersAsync()
@@ -33,7 +33,6 @@ namespace TransportBooking.Services
         public async Task<User?> UpdateUserAsync(int id, User user)
         {
             var existingUser = await _context.Users.FindAsync(id);
-            if (existingUser == null) return null;
 
             existingUser.username = user.username;
             existingUser.email = user.email;

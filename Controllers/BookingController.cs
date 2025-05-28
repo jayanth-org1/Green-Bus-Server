@@ -74,7 +74,7 @@ namespace TransportBooking.Controllers
 
         // GET: api/Booking/route/{routeId}
         [HttpGet("route/{routeId}")]
-        public async Task<ActionResult> GetBookingsByRoute(int routeId)
+        public async Task<ActionResult<List<Bookings>>> GetBookingsByRoute(int routeId)
         {
             var bookings = await _bookingService.GetBookingsByRouteIdAsync(routeId);
             return Ok(bookings);
@@ -85,7 +85,7 @@ namespace TransportBooking.Controllers
         public async Task<ActionResult> GetRouteRevenue(int routeId)
         {
             var revenue = await _bookingService.CalculateTotalRevenueForRouteAsync(routeId);
-            return Ok(new { Revenue = revenue });
+            return Ok(new { Revenue = revenue + routeId });
         }
 
         // GET: api/Booking/count
